@@ -1,5 +1,7 @@
 # ManifestWork Template for External Reference
-# File: manifestwork-ref.yaml
+#
+# This template is aligned with the real implementation at:
+# https://github.com/hyperfleet/hyperfleet-adapter/charts/examples/maestro/adapter-task-resource-manifestwork.yaml
 #
 # This template file defines the ManifestWork structure that wraps Kubernetes manifests
 # for deployment via Maestro transport. It's referenced from business logic configs
@@ -11,7 +13,7 @@
 # - .adapterName: Name of the adapter creating this ManifestWork
 # - .placementCluster: Target cluster name (becomes ManifestWork namespace)
 # - .timestamp: Creation timestamp
-# - .manifests: Array of rendered Kubernetes manifests (injected by framework)
+# - .clusterName: Cluster name from API response
 
 apiVersion: work.open-cluster-management.io/v1
 kind: ManifestWork
@@ -70,8 +72,30 @@ spec:
   # Workload - Contains the Kubernetes manifests to deploy
   # ============================================================================
   workload:
-    # Kubernetes manifests array - injected by framework from business logic config
-    manifests: {{ .resources.agentNamespaceManifestWork.manifests | toJson }}
+    manifests:
+    - apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ .clusterId | lower }}"
+        labels:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+          hyperfleet.io/managed-by: "{{ .metadata.name }}"
+          hyperfleet.io/resource-type: "namespace"
+        annotations:
+          hyperfleet.io/created-by: "hyperfleet-adapter"
+          hyperfleet.io/generation: "{{ .generationId }}"
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "cluster-config"
+        namespace: "{{ .clusterId }}"
+        labels:
+          hyperfleet.io/cluster-id: "{{ .clusterId }}"
+        annotations:
+          hyperfleet.io/generation: "{{ .generationId }}"
+      data:
+        cluster_id: "{{ .clusterId }}"
+        cluster_name: "{{ .clusterName }}"
 
   # ============================================================================
   # Delete Options - How resources should be removed
@@ -111,5 +135,3 @@ spec:
               path: ".status.conditions"
             - name: "creationTimestamp"     # When namespace was created
               path: ".metadata.creationTimestamp"
-
- 

@@ -1,107 +1,90 @@
-# HyperFleet Adapter Framework Configuration Template with Maestro Transport
+# HyperFleet Adapter Deployment Configuration Template
 #
-# This is an enhanced Configuration Template for configuring cloud provider adapters
-# using the HyperFleet Adapter Framework with Maestro transport capabilities for
-# remote cluster resource management.
+# This template is aligned with the real implementation at:
+# https://github.com/hyperfleet/hyperfleet-adapter/charts/examples/maestro/adapter-config.yaml
 #
 # TRANSPORT CLIENTS:
 # ================
-# - hyperfleet: HyperFleet API client
+# - hyperfleetApi: HyperFleet API client
+# - broker: CloudEvents broker subscription
 # - maestro: Maestro transport client
-#
+# - kubernetes: Direct K8s API client (optional)
+
 apiVersion: hyperfleet.redhat.com/v1alpha1
 kind: AdapterConfig
 metadata:
-  # Adapter name (used as resource name and in logs/metrics)
-  name: aro-hcp-adapter
-  namespace: hyperfleet-system
+  name: example-adapter
   labels:
-    hyperfleet.io/adapter-type: aro-hcp
+    hyperfleet.io/adapter-type: example-adapter
     hyperfleet.io/component: adapter
-    hyperfleet.io/transport: maestro
-
-# ============================================================================
-# Adapter Specification
-# ============================================================================
 spec:
-  # Adapter Information
   adapter:
-    # Adapter version
-    # Only check major and minor version for compatibility
-    # PATCH version can be omitted to "0.2"
-    version: "0.2.0"
+    version: "0.1.0"
+
+  # Log the full merged configuration after load (default: false)
+  debugConfig: true
+  log:
+    level: debug
 
   # ============================================================================
-  # NEW: Clients Configuration
+  # Clients Configuration
   # ============================================================================
-  # Defines how resources are managed (hyperfleet api client vs transport client)
-
   clients:
-    # Maestro-specific configuration this is optional and only used if the adapter uses Maestro transport
+    # HyperFleet API client configuration
+    hyperfleetApi:
+      baseUrl: http://hyperfleet-api:8000
+      version: v1
+      timeout: 2s
+      retryAttempts: 3
+      retryBackoff: exponential
+
+    # CloudEvents broker subscription
+    broker:
+      subscriptionId: CHANGE_ME
+      topic: CHANGE_ME
+
+    # Maestro transport client (optional - only if adapter uses Maestro transport)
     maestro:
       # Maestro gRPC server connection (for ManifestWork operations)
-      # it can be set by the adapter deployment configmap environment variable HYPERFLEET_MAESTRO_GRPC_SERVER_ADDRESS or flag --maestro-grpc-server-address
-      grpcServerAddress: "{{ .config.maestro.grpcServerAddress }}"
-      # Maestro HTTPS server connection (for REST API operations)
-      # it can be set by the adapter deployment configmap environment variable HYPERFLEET_MAESTRO_HTTP_SERVER_ADDRESS or flag --maestro-http-server-address
-      httpServerAddress: "{{ .config.maestro.httpServerAddress }}"
-      # Source identifier for CloudEvents routing and status subscription
-      # it is the adapter name, must be unique across adapters to avoid CloudEvent conflicts
-      sourceId: "{{ .metadata.name }}"
-
-      # Authentication configuration
-      auth:
-        # Authentication type: "tls" (certificate-based mTLS)
-        type: "tls"
-
-        # TLS certificate configuration
-        tlsConfig:
-          # Certificate Authority file path
-          # it can be set by the adapter deployment configmap environment variable HYPERFLEET_MAESTRO_CA_FILE or flag --maestro-ca-file
-          caFile: "{{ .config.maestro.caFile }}"
-          # Client certificate file path
-          # it can be set by the adapter deployment configmap environment variable HYPERFLEET_MAESTRO_CERT_FILE or flag --maestro-cert-file
-          certFile: "{{ .config.maestro.certFile }}"
-          # Client private key file path
-          # it can be set by the adapter deployment configmap environment variable HYPERFLEET_MAESTRO_KEY_FILE or flag --maestro-key-file
-          keyFile: "{{ .config.maestro.keyFile }}"
-          # Server name for TLS verification (used for both gRPC and HTTPS)
-          # it can be set by the adapter deployment configmap environment variable HYPERFLEET_MAESTRO_SERVER_NAME or flag --maestro-server-name
-          serverName: "{{ .config.maestro.serverName }}" 
-
-      # Connection and timeout settings
-      timeout: "30s"
-      retryAttempts: 3
-      retryBackoff: "exponential"
-
-      # Keep-alive settings for long-lived gRPC connections
-      keepalive:
-        time: "30s"
-        timeout: "10s"
-        permitWithoutStream: true
-
-  # ============================================================================
-  # HyperFleet API Configuration
-  # ============================================================================
-    httpAPI:
-      # HTTP client timeout for API calls
-      timeout: 2s
-      # Number of retry attempts for failed API calls
-      retryAttempts: 3
-      # Retry backoff strategy: exponential, linear, constant
-      retryBackoff: exponential
-    
-    kubernetes:
-      apiVersion: "v1"
-      # optional: kubeconfig file path
-      # it can be set by the adapter deployment configmap environment variable HYPERFLEET_KUBECONFIG or flag --kubeconfig
-      # when the kubeconfig value is not set, the adapter will check if host and token are set, if not it will use the in-cluster service account token for authentication
-      kubeconfig: "{{ .config.kubeconfig }}"
+      # Environment variable: HYPERFLEET_MAESTRO_GRPC_SERVER_ADDRESS
+      grpcServerAddress: "maestro-grpc.maestro.svc.cluster.local:8090"
       
-      # optional: host and token for direct authentication
-      # it can be set by the adapter deployment configmap environment variable HYPERFLEET_KUBECONFIG_HOST or flag --kubeconfig-host
-      host: "{{ .config.host }}"
-      # it can be set by the adapter deployment configmap environment variable HYPERFLEET_KUBECONFIG_TOKEN or flag --kubeconfig-token
-      token: "{{ .config.token }}"
-      # it can be set by the adapter deployment configmap environment variable HYPERFLEET_KUBECONFIG_CA_FILE or flag --kubeconfig-ca-file
-      caFile: "{{ .config.caFile }}"
+      # HTTPS server address for REST API operations (optional)
+      # Environment variable: HYPERFLEET_MAESTRO_HTTP_SERVER_ADDRESS
+      httpServerAddress: "http://maestro.maestro.svc.cluster.local:8000"
+      
+      # Source identifier for CloudEvents routing (must be unique across adapters)
+      # Environment variable: HYPERFLEET_MAESTRO_SOURCE_ID
+      sourceId: "hyperfleet-adapter"
+      
+      # Client identifier (defaults to sourceId if not specified)
+      # Environment variable: HYPERFLEET_MAESTRO_CLIENT_ID
+      clientId: "hyperfleet-adapter-client"
+      
+      # Set to true for development without TLS
+      insecure: true
+      
+      # Authentication configuration (uncomment for production)
+      #auth:
+      #  type: "tls"  # TLS certificate-based mTLS
+      #  
+      #  tlsConfig:
+      #    # gRPC TLS configuration
+      #    # Certificate paths (mounted from Kubernetes secrets)
+      #    # Environment variable: HYPERFLEET_MAESTRO_CA_FILE
+      #    caFile: "/etc/maestro/certs/grpc/ca.crt"
+      #    
+      #    # Environment variable: HYPERFLEET_MAESTRO_CERT_FILE
+      #    certFile: "/etc/maestro/certs/grpc/client.crt"
+      #    
+      #    # Environment variable: HYPERFLEET_MAESTRO_KEY_FILE
+      #    keyFile: "/etc/maestro/certs/grpc/client.key"
+      #    
+      #    # Server name for TLS verification
+      #    # Environment variable: HYPERFLEET_MAESTRO_SERVER_NAME
+      #    serverName: "maestro-grpc.maestro.svc.cluster.local"
+      #    
+      #    # HTTP API TLS configuration (may use different CA than gRPC)
+      #    # If not set, falls back to caFile for backwards compatibility
+      #    # Environment variable: HYPERFLEET_MAESTRO_HTTP_CA_FILE
+      #    httpCaFile: "/etc/maestro/certs/https/ca.crt"
