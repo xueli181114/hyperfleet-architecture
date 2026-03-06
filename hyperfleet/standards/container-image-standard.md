@@ -84,7 +84,11 @@ FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS builder
 ARG GIT_SHA=unknown
 ARG GIT_DIRTY=""
 ARG BUILD_DATE=""
-ARG VERSION=""
+# APP_VERSION avoids collision with the go-toolset base image's
+# ENV VERSION=<go-version> which shadows a same-named ARG in RUN commands.
+ARG APP_VERSION="0.0.0-dev"
+# Override the base image's ENV VERSION=<go-version> to avoid polluting the Makefile
+ENV VERSION=${APP_VERSION}
 
 USER root
 RUN dnf install -y make && dnf clean all
@@ -104,7 +108,7 @@ COPY --chown=1001:0 . .
 RUN --mount=type=cache,target=/opt/app-root/src/go/pkg/mod,uid=1001 \
     --mount=type=cache,target=/opt/app-root/src/.cache/go-build,uid=1001 \
     CGO_ENABLED=0 GOOS=linux \
-    GIT_SHA=${GIT_SHA} GIT_DIRTY=${GIT_DIRTY} BUILD_DATE=${BUILD_DATE} VERSION=${VERSION} \
+    GIT_SHA=${GIT_SHA} GIT_DIRTY=${GIT_DIRTY} BUILD_DATE=${BUILD_DATE} \
     make build
 
 # ── Runtime stage ──
@@ -126,6 +130,7 @@ ENTRYPOINT ["/app/<service-name>"]
 - **`--chown=1001:0`** on COPY commands for the builder stage (UBI9 convention)
 - **`WORKDIR /app`** in the runtime stage to keep a clean layout
 - **Build args** passed through to `make build` for version embedding
+- **`ENV VERSION=${APP_VERSION}`** overrides the base image's `ENV VERSION=<go-version>` so the Makefile sees the correct application version (see [APP_VERSION Convention](#app_version-convention))
 
 ---
 
@@ -186,7 +191,7 @@ Standard ldflags:
 
 ```makefile
 LDFLAGS := -s -w \
-           -X main.version=$(VERSION) \
+           -X main.version=$(APP_VERSION) \
            -X main.commit=$(GIT_SHA) \
            -X main.date=$(BUILD_DATE)
 ```
@@ -210,10 +215,10 @@ $(CONTAINER_TOOL) build --platform $(PLATFORM) ...
 All production images **MUST** include standardized OCI labels. Place the `LABEL` instruction at the end of the Dockerfile (after `ARG` re-declarations) so it doesn't invalidate earlier layer caches:
 
 ```dockerfile
-ARG VERSION=""
+ARG APP_VERSION="0.0.0-dev"
 LABEL name="<service-name>" \
       vendor="Red Hat" \
-      version="${VERSION}" \
+      version="${APP_VERSION}" \
       summary="<one-line summary>" \
       description="<detailed description of what the service does>"
 ```
@@ -263,7 +268,11 @@ FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS builder
 ARG GIT_SHA=unknown
 ARG GIT_DIRTY=""
 ARG BUILD_DATE=""
-ARG VERSION=""
+# APP_VERSION avoids collision with the go-toolset base image's
+# ENV VERSION=<go-version> which shadows a same-named ARG in RUN commands.
+ARG APP_VERSION="0.0.0-dev"
+# Override the base image's ENV VERSION=<go-version> to avoid polluting the Makefile
+ENV VERSION=${APP_VERSION}
 
 USER root
 RUN dnf install -y make && dnf clean all
@@ -286,7 +295,7 @@ COPY --chown=1001:0 . .
 RUN --mount=type=cache,target=/opt/app-root/src/go/pkg/mod,uid=1001 \
     --mount=type=cache,target=/opt/app-root/src/.cache/go-build,uid=1001 \
     CGO_ENABLED=0 GOOS=linux \
-    GIT_SHA=${GIT_SHA} GIT_DIRTY=${GIT_DIRTY} BUILD_DATE=${BUILD_DATE} VERSION=${VERSION} \
+    GIT_SHA=${GIT_SHA} GIT_DIRTY=${GIT_DIRTY} BUILD_DATE=${BUILD_DATE} \
     make build
 
 FROM ${BASE_IMAGE}
@@ -299,13 +308,54 @@ USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/app/<service-name>"]
 
-ARG VERSION=""
+ARG APP_VERSION="0.0.0-dev"
 LABEL name="<service-name>" \
       vendor="Red Hat" \
-      version="${VERSION}" \
+      version="${APP_VERSION}" \
       summary="<one-line service summary>" \
       description="<detailed service description>"
 ```
+
+---
+
+## APP_VERSION Convention
+
+### Problem
+
+The `ubi9/go-toolset` base image sets `ENV VERSION=<go-toolchain-version>` (e.g. `1.25.7`). In Docker/Podman, an inherited `ENV` always shadows an `ARG` with the same name inside `RUN` commands. If a Dockerfile declares `ARG VERSION` and the Makefile uses `VERSION ?=`, the Go toolchain version leaks into the binary instead of the intended application version.
+
+### Solution
+
+All HyperFleet Dockerfiles **MUST** use `APP_VERSION` instead of `VERSION` for the application version build arg:
+
+```dockerfile
+ARG APP_VERSION="0.0.0-dev"
+ENV VERSION=${APP_VERSION}
+```
+
+This two-line pattern:
+1. **Avoids the naming collision** — `APP_VERSION` is not set by the base image
+2. **Shields the Makefile from base-image leaks** — `ENV VERSION=${APP_VERSION}` overrides the inherited `ENV VERSION=<go-version>`, so `RUN make build` sees the correct application version via `APP_VERSION` in the Makefile. The `ENV VERSION` line exists solely for backward compatibility; new Makefiles should use `APP_VERSION` as the primary version variable
+
+### Version Flow
+
+```
+Makefile (APP_VERSION via git describe)
+  ├─ go build -ldflags "-X ...Version=$(APP_VERSION)"    → binary version (local builds)
+  └─ docker build --build-arg APP_VERSION=$(APP_VERSION)  → Dockerfile
+       └─ ENV VERSION=${APP_VERSION}                       → shields Makefile from base-image ENV
+            └─ make build                                  → Makefile uses APP_VERSION directly
+```
+
+### Default Version Semantics
+
+| Scenario | APP_VERSION Value | Source |
+|----------|------------------|--------|
+| Untagged local build | `a1b2c3d` (or `a1b2c3d-dirty`) | `git describe --tags --always --dirty` (abbreviated commit SHA) |
+| Dev build from tagged repo | `v0.1.1-3-gabcdef` | `git describe --tags --always --dirty` |
+| Release build | `v0.1.1` | Explicit `APP_VERSION=v0.1.1` in CI |
+| No git metadata available | `0.0.0-dev` | Makefile fallback when `git describe` fails |
+| Raw `go build` (no Make) | `0.0.0-dev` | Source code default constant |
 
 ---
 
